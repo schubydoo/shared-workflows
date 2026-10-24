@@ -1,0 +1,8 @@
+{
+  "name": "shared-workflows-claude-review",
+  "private": true,
+  "description": "The pinned Claude Code CLI of the `auth: api` path of .github/workflows/claude-review.yml.",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.306"
+  }
+}
