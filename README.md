@@ -53,10 +53,14 @@ already uses that name, and the two runs then wait on each other.
 
 The repo also needs `.github/claude-review-instructions.md` on its default branch. The job reads
 that file from the default branch, so a pull request cannot change the rules for its own review.
-The job refuses a file shorter than 500 bytes. The file must tell Claude to write `review.json`
-at the exact path that the submit command in the system prompt names. Claude cannot write in the
-workspace. The guard refuses a `review.json` whose event is not `COMMENT`. It also refuses keys
-other than `body`, `commit_id`, `comments` and `event`.
+The job refuses a file shorter than 500 bytes.
+
+That file holds only the project rules: what to look for, the severities, how to classify an
+earlier finding on a re-review, and project links. Do not put posting rules in it. The workflow
+writes a central posting recipe next to it. The recipe covers the grouped review, the
+`review.json` shape, thread replies, the tally line and the allowed commands. Where the two files
+disagree about posting, the recipe wins, because the guard enforces it. The recipe is the
+`claude-review-recipe.md` heredoc in the "Fetch the review instructions" step.
 
 ### Inputs
 
