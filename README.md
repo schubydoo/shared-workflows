@@ -53,7 +53,10 @@ already uses that name, and the two runs then wait on each other.
 
 The repo also needs `.github/claude-review-instructions.md` on its default branch. The job reads
 that file from the default branch, so a pull request cannot change the rules for its own review.
-The job refuses a file shorter than 500 bytes.
+The job refuses a file shorter than 500 bytes. The file must tell Claude to write `review.json`
+at the exact path that the submit command in the system prompt names. Claude cannot write in the
+workspace. The guard refuses a `review.json` whose event is not `COMMENT`. It also refuses keys
+other than `body`, `commit_id`, `comments` and `event`.
 
 ### Inputs
 
