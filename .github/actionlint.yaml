@@ -1,0 +1,14 @@
+# actionlint configuration.
+#
+# actionlint (through v1.7.12) does not know the `job.workflow_ref` and `job.workflow_sha`
+# context properties. GitHub documents both ("The commit SHA of the workflow file that
+# defines the current job"), and claude-review.yml needs them: they are the only way a
+# reusable workflow can name its own commit. The two messages are suppressed here, for
+# that file only, rather than replacing the properties with a workaround.
+#
+# Remove an entry once a pinned actionlint knows the property.
+paths:
+  .github/workflows/claude-review.yml:
+    ignore:
+      - 'property "workflow_ref" is not defined in object type \{check_run_id: number'
+      - 'property "workflow_sha" is not defined in object type \{check_run_id: number'
