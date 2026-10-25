@@ -225,7 +225,8 @@ jobs:
           permission-contents: read
 
       # `auth: api` only: the progress comment's token. Workflow steps alone hold it; Claude
-      # never sees it.
+      # never sees it. Issues write alone is not enough: the issue-comments endpoint answers
+      # 403 on a pull request without Pull requests write (claustrum PR 715, 2026-10-25).
       - name: Mint the progress-comment token
         id: progress-token
         if: inputs.auth == 'api'
@@ -236,6 +237,7 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-issues: write
+          permission-pull-requests: write
 
       - name: Resolve the pull request
         id: resolve
@@ -408,11 +410,18 @@ jobs:
           fi
           # ⚠️ The deny list, built ONCE for both Review steps. A deny rule wins over every
           # allow rule, whoever adds it; the comment at the Review step explains each entry.
+          # The CLI offers more tools than a review needs (the init record of claustrum PR 715
+          # listed 25), so every one the review does not use is denied by name: Workflow and
+          # Monitor could start work beside the main loop, which the payload check must not
+          # race, and the rest can reach the network, other sessions or a schedule. A
+          # denied tool is not even offered. ToolSearch stays: the oauth path loads the
+          # action's comment tool through it. Read the init record's tool list on every CLI
+          # bump and deny any new tool here.
           # `Read(//<path>)` is the filesystem-absolute form, so each path below that already
           # starts with `/` gets ONE more `/` in front. RULES_DIR repeats the formula of the
           # "Fetch the review instructions" step.
           RULES_DIR="$(dirname "$RUNNER_TEMP")/claude-review-rules"
-          DENY="Task,Agent,mcp__github_file_ops__commit_files,mcp__github_file_ops__delete_files,mcp__github_ci__download_job_log,Read(//proc/**),Read(/${RUNNER_TEMP}/**),Read(~/.*),Read(~/.*/**),Read(/${GITHUB_WORKSPACE}/.git/**),Read(/${GITHUB_WORKSPACE}/pr-head/.git/**),Edit(/${GITHUB_WORKSPACE}/**),Write(/${GITHUB_WORKSPACE}/**),Edit(/${RULES_DIR}/**),Write(/${RULES_DIR}/**),Read(/${GUARD}/**),Edit(/${GUARD}/**),Write(/${GUARD}/**),Bash(gh * -R*),Bash(gh * --repo*),Bash(*GH_REPO*),Bash(*GH_HOST*),Bash(gh *://*),Bash(gh *github.com*),Bash(gh *--search*),Bash(gh * -S*)"
+          DENY="Task,Agent,Workflow,Monitor,SendMessage,ListAgents,TaskStop,CronCreate,CronDelete,CronList,ScheduleWakeup,PushNotification,RemoteTrigger,EnterWorktree,ExitWorktree,DesignSync,ReportFindings,Skill,WebFetch,WebSearch,NotebookEdit,mcp__github_file_ops__commit_files,mcp__github_file_ops__delete_files,mcp__github_ci__download_job_log,Read(//proc/**),Read(/${RUNNER_TEMP}/**),Read(~/.*),Read(~/.*/**),Read(/${GITHUB_WORKSPACE}/.git/**),Read(/${GITHUB_WORKSPACE}/pr-head/.git/**),Edit(/${GITHUB_WORKSPACE}/**),Write(/${GITHUB_WORKSPACE}/**),Edit(/${RULES_DIR}/**),Write(/${RULES_DIR}/**),Read(/${GUARD}/**),Edit(/${GUARD}/**),Write(/${GUARD}/**),Bash(gh * -R*),Bash(gh * --repo*),Bash(*GH_REPO*),Bash(*GH_HOST*),Bash(gh *://*),Bash(gh *github.com*),Bash(gh *--search*),Bash(gh * -S*)"
           { echo "pr=$PR"; echo "debug=$DEBUG"; echo "submit=$SUBMIT"; echo "comments=$COMMENTS"; echo "reply=$REPLY"; echo "read_list=$READ_LIST"; echo "settings=$SETTINGS"; echo "guard=$GUARD"; echo "payload=$PAYLOAD"; echo "plugin_arg=$PLUGIN_ARG"; echo "reviewer_re=$REVIEWER_RE"; echo "deny=$DENY"; } >> "$GITHUB_OUTPUT"
           echo "::notice::Reviewing PR #$PR (debug artifact: $DEBUG)"
 
@@ -948,6 +957,8 @@ jobs:
         # copy of the hook, the deny list, the payload folder and the system prompt's rules
         # are the oauth path's own. `--permission-mode acceptEdits` keeps the Write of the
         # payloads; the denies keep Edit and Write out of the workspace.
+        # `--tools` offers only the six built-in tools a review uses, so a tool that a new CLI
+        # adds is not offered at all; the deny list repeats the known ones for both paths.
         # ⚠️ Never add `--bare`: it skips every hook, the guard among them.
         if: inputs.auth == 'api'
         env:
@@ -1019,6 +1030,7 @@ jobs:
               --add-dir "$RULES_DIR" \
               --add-dir "$PAYLOAD" \
               $PLUGIN_ARG \
+              --tools "Bash,Read,Grep,Glob,Write,Edit" \
               --allowedTools "Read,Grep,Glob" \
               --disallowedTools "$DENY" \
               --append-system-prompt "$PROMPT" \
