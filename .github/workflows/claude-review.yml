@@ -8,7 +8,7 @@ name: Claude review
 # The `github` context in here is the CALLER's: the event, the repository, the default
 # branch, `GITHUB_REPOSITORY`. Every "this repo" below means the calling repo.
 #
-# `auth` selects the billing path.
+# `auth` selects the billing path; it is the only input. Default: api.
 #   oauth  claude-code-action on the caller's CLAUDE_CODE_OAUTH_TOKEN. Claude Code usage, on
 #          the subscription. The review posts as claude[bot].
 #   api    `claude -p`, run by the "Review (api)" step itself, signed in by Workload Identity
@@ -54,42 +54,13 @@ name: Claude review
 on:
   workflow_call:
     inputs:
+      # The ONLY input, so a repo can fall back to the subscription path if the api path
+      # breaks. Everything else (model, style, timeout, runner, exclude list) is set in this
+      # file, and the federation ids come from the caller's repo variables.
       auth:
-        description: "Billing path: `oauth` (claude-code-action on the OAuth token) or `api` (`claude -p` on API credits through Workload Identity Federation)."
+        description: "Billing path: `api` (`claude -p` on API credits through Workload Identity Federation, the default) or `oauth` (claude-code-action on the OAuth token, the fallback)."
         type: string
-        default: oauth
-      anthropic-federation-rule-id:
-        description: "`auth: api` only. The Claude Console federation rule id (fdrl_...), from the caller's repo variables."
-        type: string
-        default: ""
-      anthropic-organization-id:
-        description: "`auth: api` only. The Anthropic organization id."
-        type: string
-        default: ""
-      anthropic-service-account-id:
-        description: "`auth: api` only. The service account id (svac_...)."
-        type: string
-        default: ""
-      anthropic-workspace-id:
-        description: "`auth: api` only. The workspace id (wrkspc_...). Usage bills to this workspace."
-        type: string
-        default: ""
-      timeout-minutes:
-        description: "The review job's timeout."
-        type: number
-        default: 30
-      runs-on:
-        description: "The runner label."
-        type: string
-        default: ubuntu-latest
-      exclude-comments-by-actor:
-        description: "Comma-separated logins whose comments stay out of Claude's context."
-        type: string
-        default: "greptile-apps[bot],codecov[bot]"
-      output-style:
-        description: "A Simple English plugin output style, as `simple-english:<style>`. Empty: no plugin, the default style."
-        type: string
-        default: ""
+        default: api
     secrets:
       app-client-id:
         description: "Client ID of the calling repo's CI GitHub App."
@@ -98,7 +69,7 @@ on:
         description: "Private key of the calling repo's CI GitHub App."
         required: true
       claude-oauth-token:
-        description: "CLAUDE_CODE_OAUTH_TOKEN. Required for `auth: oauth`; never used on `auth: api`."
+        description: "CLAUDE_CODE_OAUTH_TOKEN. Only for the `auth: oauth` fallback; never used on `auth: api`."
         required: false
 
 permissions:
@@ -113,8 +84,8 @@ jobs:
       github.event.issue.pull_request &&
       contains(github.event.comment.body, '@claude review') &&
       github.event.comment.author_association == 'OWNER'
-    runs-on: ${{ inputs.runs-on }}
-    timeout-minutes: ${{ inputs.timeout-minutes }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     concurrency:
       group: claude-review-${{ github.event.issue.number }}
       # MUST stay false. The action posts its own tracking comment mid-run, which fires
@@ -130,7 +101,7 @@ jobs:
       # the "Assert the output style resolves" step proves it against the plugin checkout, so
       # the two cannot drift into the silent-default failure described there. Empty means
       # no plugin: the plugin steps skip and the settings JSON carries no `outputStyle`.
-      REVIEW_OUTPUT_STYLE: ${{ inputs.output-style }}
+      REVIEW_OUTPUT_STYLE: simple-english:simple-english
       # Likewise the ONE place the plugin checkout path is written: the `path:` below, the
       # assert step, and `--plugin-dir` all read it. Two of the three moving while the third
       # stays behind is the same silent class this workflow keeps hitting — the plugin would
@@ -153,10 +124,10 @@ jobs:
           HAVE_APP_ID: ${{ secrets.app-client-id != '' }}
           HAVE_APP_KEY: ${{ secrets.app-private-key != '' }}
           HAVE_OAUTH: ${{ secrets.claude-oauth-token != '' }}
-          FED_RULE: ${{ inputs.anthropic-federation-rule-id }}
-          FED_ORG: ${{ inputs.anthropic-organization-id }}
-          FED_SVAC: ${{ inputs.anthropic-service-account-id }}
-          FED_WS: ${{ inputs.anthropic-workspace-id }}
+          FED_RULE: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          FED_ORG: ${{ vars.ANTHROPIC_ORG_ID }}
+          FED_SVAC: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          FED_WS: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
         run: |
           set -euo pipefail
           case "$AUTH" in
@@ -171,10 +142,10 @@ jobs:
           if [ "$AUTH" = oauth ]; then
             [ "$HAVE_OAUTH" = true ] || { echo "::error::the claude-oauth-token secret is empty, and auth 'oauth' needs it"; exit 1; }
           else
-            [ -n "$FED_RULE" ] || { echo "::error::the anthropic-federation-rule-id input is empty, and auth 'api' needs it"; exit 1; }
-            [ -n "$FED_ORG" ] || { echo "::error::the anthropic-organization-id input is empty, and auth 'api' needs it"; exit 1; }
-            [ -n "$FED_SVAC" ] || { echo "::error::the anthropic-service-account-id input is empty, and auth 'api' needs it"; exit 1; }
-            [ -n "$FED_WS" ] || { echo "::error::the anthropic-workspace-id input is empty, and auth 'api' needs it"; exit 1; }
+            [ -n "$FED_RULE" ] || { echo "::error::the repo variable ANTHROPIC_FEDERATION_RULE_ID is empty, and auth 'api' needs it"; exit 1; }
+            [ -n "$FED_ORG" ] || { echo "::error::the repo variable ANTHROPIC_ORG_ID is empty, and auth 'api' needs it"; exit 1; }
+            [ -n "$FED_SVAC" ] || { echo "::error::the repo variable ANTHROPIC_SERVICE_ACCOUNT_ID is empty, and auth 'api' needs it"; exit 1; }
+            [ -n "$FED_WS" ] || { echo "::error::the repo variable ANTHROPIC_WORKSPACE_ID is empty, and auth 'api' needs it"; exit 1; }
           fi
 
       # Mint an installation token of the CALLER's CI App (its own ≥5,000 REST req/hr pool)
@@ -836,9 +807,9 @@ jobs:
           # `--allowedTools` below is split on commas (see the resolve step).
           settings: ${{ steps.resolve.outputs.settings }}
           # NO `prompt:` — see the banner. Guidance goes through the system prompt.
-          # Keep other bots' comments (for example codecov's coverage report) out of Claude's
-          # context. The caller sets the list.
-          exclude_comments_by_actor: ${{ inputs.exclude-comments-by-actor }}
+          # Keep other bots' comments (Greptile's review, codecov's coverage report) out of
+          # Claude's context. One list for every repo; a bot that never posts costs nothing.
+          exclude_comments_by_actor: "greptile-apps[bot],codecov[bot]"
           # Unlocks mcp__github_ci__{get_ci_status,get_workflow_run_details};
           # gated on this input AND `actions: read` above.
           additional_permissions: |
@@ -976,12 +947,13 @@ jobs:
           RULES_DIR: ${{ steps.rules.outputs.dir }}
           RULES_FILE: ${{ steps.rules.outputs.file }}
           RECIPE_FILE: ${{ steps.rules.outputs.recipe }}
-          # Workload Identity Federation. These are identifiers, not credentials. The CLI
+          # Workload Identity Federation. These are identifiers, not credentials, read from the
+          # CALLER's repo variables (a called workflow's `vars` context is the caller's). The CLI
           # reads them and ANTHROPIC_IDENTITY_TOKEN_FILE, set below.
-          ANTHROPIC_FEDERATION_RULE_ID: ${{ inputs.anthropic-federation-rule-id }}
-          ANTHROPIC_ORGANIZATION_ID: ${{ inputs.anthropic-organization-id }}
-          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ inputs.anthropic-service-account-id }}
-          ANTHROPIC_WORKSPACE_ID: ${{ inputs.anthropic-workspace-id }}
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORG_ID }}
+          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
         run: |
           set -euo pipefail
           # A GitHub OIDC token lives about 5 minutes and can be exchanged once, and the CLI

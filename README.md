@@ -15,15 +15,17 @@ approves or requests changes.
 
 ### Caller file
 
-Put this in the project repo as `.github/workflows/claude-review.yml`. Replace `<sha>` with a
-full commit SHA of this repo, and replace the secret names with the repo's own names.
+Every repo uses this file as `.github/workflows/claude-review.yml`, unchanged except for `<sha>`
+and the two App secret names. All settings live in this repo, so a caller passes no inputs.
 
 ```yaml
 name: Claude review
 
+# On-demand PR review: comment "@claude review" on a pull request.
+# The job and all its settings live in schubydoo/shared-workflows. This file only calls it.
+
 on:
-  # The review is requested by a comment, so this trigger is required. The hardening lives
-  # in the called workflow: an exact-command allow list, a guard hook, and a pin to the head SHA.
+  # A comment starts the review, so this trigger is required.
   issue_comment: # zizmor: ignore[dangerous-triggers]
     types: [created]
 
@@ -31,118 +33,84 @@ permissions: {}
 
 jobs:
   review:
-    # A called workflow cannot hold more permissions than the caller grants, so grant the
-    # full list here.
+    # A called workflow gets no more permissions than the caller grants.
     permissions:
       contents: read
       pull-requests: write
       issues: write
       id-token: write
       actions: read
-    uses: schubydoo/shared-workflows/.github/workflows/claude-review.yml@<sha> # <version>
-    with:
-      output-style: simple-english:simple-english
+    uses: schubydoo/shared-workflows/.github/workflows/claude-review.yml@<sha> # main
     secrets:
       app-client-id: ${{ secrets.EXAMPLE_CI_CLIENT_ID }}
       app-private-key: ${{ secrets.EXAMPLE_CI_APP_PRIVATE_KEY }}
+      # Only for the `auth: oauth` fallback.
       claude-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
 Do not add a `concurrency:` group named `claude-review-<number>` to the caller. The called job
 already uses that name, and the two runs then wait on each other.
 
-The repo also needs `.github/claude-review-instructions.md` on its default branch. The job reads
-that file from the default branch, so a pull request cannot change the rules for its own review.
-The job refuses a file shorter than 500 bytes.
+### What the repo provides
 
-That file holds only the project rules: what to look for, the severities, how to classify an
-earlier finding on a re-review, and project links. Do not put posting rules in it. The workflow
-writes a central posting recipe next to it. The recipe covers the grouped review, the
-`review.json` shape, thread replies, the tally line and the allowed commands. Where the two files
-disagree about posting, the recipe wins, because the guard enforces it. The recipe is the
-`claude-review-recipe.md` heredoc in the "Fetch the review instructions" step.
+- `.github/claude-review-instructions.md` on the default branch: the project rules (what to look
+  for, severities, re-review classification, link format). The job refuses a file under 500 bytes.
+  Posting rules do not belong there. The workflow writes a central posting recipe next to it, and
+  the recipe wins on posting.
+- Two secrets for the repo's CI GitHub App: its client ID and private key. The App needs Contents
+  read, Pull requests read and write, and Issues read and write.
+- Four repo variables, read by the workflow itself: `ANTHROPIC_FEDERATION_RULE_ID`,
+  `ANTHROPIC_ORG_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID` and `ANTHROPIC_WORKSPACE_ID`. They are
+  identifiers, not credentials. A called workflow reads the caller's variables.
+- A federation rule in the Claude Console (see below).
 
-### Inputs
+### Fixed settings
 
-| Input | Default | Use |
-| --- | --- | --- |
-| `auth` | `oauth` | The billing path: `oauth` or `api`. See "The two billing paths". |
-| `anthropic-federation-rule-id` | empty | `auth: api` only. The federation rule ID (`fdrl_...`). |
-| `anthropic-organization-id` | empty | `auth: api` only. The Anthropic organization ID. |
-| `anthropic-service-account-id` | empty | `auth: api` only. The service account ID (`svac_...`). |
-| `anthropic-workspace-id` | empty | `auth: api` only. The workspace ID (`wrkspc_...`). Usage bills to it. |
-| `timeout-minutes` | `30` | The job timeout. |
-| `runs-on` | `ubuntu-latest` | The runner label. |
-| `exclude-comments-by-actor` | `greptile-apps[bot],codecov[bot]` | Logins whose comments stay out of Claude's context. |
-| `output-style` | empty | A Simple English output style, for example `simple-english:simple-english`. Empty means no plugin. |
+Every review uses the same settings, set in the workflow:
 
-The model is not an input. Every review runs `claude-opus-5-5`, set once as `REVIEW_MODEL` in
-the workflow, so no repo can override it. A caller that still passes `model:` fails.
+| Setting | Value |
+| --- | --- |
+| Model | `claude-opus-5-5` (`REVIEW_MODEL`) |
+| Output style | `simple-english:simple-english` (the plugin is pinned by SHA) |
+| Timeout | 30 minutes |
+| Runner | `ubuntu-latest` |
+| Comments kept out of Claude's context | `greptile-apps[bot]`, `codecov[bot]` |
 
-### Secrets
-
-| Secret | Required | Use |
-| --- | --- | --- |
-| `app-client-id` | yes | The client ID of the calling repo's CI GitHub App. |
-| `app-private-key` | yes | The private key of that App. |
-| `claude-oauth-token` | for `auth: oauth` | The repo's `CLAUDE_CODE_OAUTH_TOKEN`. Never used on `auth: api`. |
-
-Every CI App token is scoped to the calling repo. The workflow's own steps use a read-only one to
-read the PR, its comments and the instructions file.
+The one input is `auth`. Its default is `api`. A repo sets `auth: oauth` under `with:` only to
+fall back to the subscription path.
 
 ### The two billing paths
 
-`auth: oauth` runs `claude-code-action` on the repo's `CLAUDE_CODE_OAUTH_TOKEN`. Anthropic counts
-it as Claude Code usage, on the subscription. The review posts as `claude[bot]`.
-
-`auth: api` runs `claude -p` from a workflow step, with Claude Code pinned by
+`auth: api` (the default) runs `claude -p` from a workflow step, with Claude Code pinned by
 `.github/claude-review/package-lock.json`. Anthropic counts it as Agent SDK usage, which the
-plan's monthly API credits cover. The job signs in with Workload Identity Federation, so no Claude
-credential is stored. The review posts as the repo's CI App, and workflow steps keep a progress
-comment on the PR. The CI App needs Pull requests write and Issues write on this path.
+plan's API credits cover. It signs in with Workload Identity Federation, so no Claude credential
+is stored. The review posts as the repo's CI App, with a progress comment.
 
-The caller for `auth: api` adds these lines under `with:`. The secrets stay the same, and
-`claude-oauth-token` can stay for a switch back to `oauth`.
-
-```yaml
-      auth: api
-      anthropic-federation-rule-id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
-      anthropic-organization-id: ${{ vars.ANTHROPIC_ORG_ID }}
-      anthropic-service-account-id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
-      anthropic-workspace-id: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
-```
-
-The four values are identifiers, not credentials, so they are repo variables.
+`auth: oauth` runs `claude-code-action` on `CLAUDE_CODE_OAUTH_TOKEN`. Anthropic counts it as
+Claude Code usage, on the subscription. The review posts as `claude[bot]`.
 
 ### The federation rule for each repo
 
-Each repo has its own rule in the Claude Console, with its own workspace, so usage stays split
-per repo. Create it with the GitHub Actions tile of Connect workload. Then make its match block
-look like this, with the repo's values:
+Each repo has its own rule, service account and workspace in the Claude Console, so usage stays
+split per repo. Create the rule with Connect workload and the `github-actions` issuer, scope
+`workspace:developer`, token lifetime 600 seconds. Its match block:
 
-```json
-{
-  "subject_prefix": "repo:schubydoo/<repo>:ref:refs/heads/main",
-  "audience": "https://api.anthropic.com",
-  "claims": {
-    "repository": "schubydoo/<repo>",
-    "repository_owner": "schubydoo",
-    "event_name": "issue_comment",
-    "ref": "refs/heads/main",
-    "actor": "schubydoo",
-    "workflow_ref": "schubydoo/<repo>/.github/workflows/claude-review.yml@refs/heads/main"
-  },
-  "condition": "claims.repository_id == \"<repo id>\" && claims.repository_owner_id == \"<owner id>\" && claims.job_workflow_ref.startsWith(\"schubydoo/shared-workflows/.github/workflows/claude-review.yml@\")"
-}
+- Subject pattern: `repo:schubydoo/<repo>:ref:refs/heads/main`. If the repo has GitHub's
+  immutable subject turned on, it is `repo:schubydoo@<owner id>/<repo>@<repo id>:ref:refs/heads/main`
+  instead. `gh api repos/schubydoo/<repo>/actions/oidc/customization/sub` shows which.
+- Audience: `https://api.anthropic.com`
+- Claims: `repository` = `schubydoo/<repo>`, `repository_owner` = `schubydoo`, `event_name` =
+  `issue_comment`, `ref` = `refs/heads/main`, `actor` = `schubydoo`, `actor_id` = `<owner id>`,
+  `workflow_ref` = `schubydoo/<repo>/.github/workflows/claude-review.yml@refs/heads/main`.
+- Condition:
+
+```text
+claims.repository_id == "<repo id>" && claims.repository_owner_id == "<owner id>" && claims.job_workflow_ref.startsWith("schubydoo/shared-workflows/.github/workflows/claude-review.yml@")
 ```
 
-- `workflow_ref` names the caller file on `main`. A comment-triggered run always uses that copy,
-  so a pull request cannot change it.
-- `job_workflow_ref` names this repo's workflow. The prefix match accepts any ref, because each
-  Renovate bump changes the pinned SHA. The caller file on `main` decides which SHA runs.
-- The IDs pin the repo and the owner, so a renamed or recreated repo with the same name does not
-  match. Get them with `gh api repos/schubydoo/<repo> --jq '.id, .owner.id'`.
-- The `jti` replay check stays on. The job writes a fresh GitHub OIDC token every 4 minutes.
+`gh api repos/schubydoo/<repo> --jq '.id, .owner.id'` gives the two IDs. The `job_workflow_ref`
+prefix accepts any commit of this workflow, so Renovate's pin bumps keep working. The Console's
+edit form cannot add a condition to a rule without one, so create rules with the wizard.
 
 ### Testing a change
 
