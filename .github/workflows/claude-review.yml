@@ -253,8 +253,12 @@ jobs:
           DEBUG=false
           case "$COMMENT_BODY" in *"@claude review debug"*) DEBUG=true ;; esac
           # The plugin loads only with an output style.
+          # ⚠️ The plugin and the api path's tools run from outside the workspace: a fallback checks
+          # the PR head out over the workspace root, and the PR must not replace their files.
+          PLUGIN_DIR="$(dirname "$RUNNER_TEMP")/${REVIEW_PLUGIN_PATH}"
+          TOOLS_DIR="$(dirname "$RUNNER_TEMP")/claude-review-tools"
           PLUGIN_ARG=""
-          [ -z "$REVIEW_OUTPUT_STYLE" ] || PLUGIN_ARG="--plugin-dir ${GITHUB_WORKSPACE}/${REVIEW_PLUGIN_PATH}"
+          [ -z "$REVIEW_OUTPUT_STYLE" ] || PLUGIN_ARG="--plugin-dir ${PLUGIN_DIR}"
           # The reviewer's login as a regex: claude[bot] on oauth; on api the caller's CI App, or
           # claude[bot] after a fallback.
           if [ "$AUTH" = api ]; then
@@ -269,8 +273,8 @@ jobs:
           # `gh` aimed at other repos. `Read(//path)` is absolute: a path that already starts with `/`
           # gets one more `/`. Check the CLI's tool list on every bump and deny any new tool here.
           RULES_DIR="$(dirname "$RUNNER_TEMP")/claude-review-rules"
-          DENY="Task,Agent,Workflow,Monitor,SendMessage,ListAgents,TaskStop,CronCreate,CronDelete,CronList,ScheduleWakeup,PushNotification,RemoteTrigger,EnterWorktree,ExitWorktree,DesignSync,ReportFindings,Skill,WebFetch,WebSearch,NotebookEdit,mcp__github_file_ops__commit_files,mcp__github_file_ops__delete_files,mcp__github_ci__download_job_log,Read(//proc/**),Read(/${RUNNER_TEMP}/**),Read(~/.*),Read(~/.*/**),Read(/${GITHUB_WORKSPACE}/.git/**),Read(/${GITHUB_WORKSPACE}/pr-head/.git/**),Edit(/${GITHUB_WORKSPACE}/**),Write(/${GITHUB_WORKSPACE}/**),Edit(/${RULES_DIR}/**),Write(/${RULES_DIR}/**),Read(/${GUARD}/**),Edit(/${GUARD}/**),Write(/${GUARD}/**),Bash(gh * -R*),Bash(gh * --repo*),Bash(*GH_REPO*),Bash(*GH_HOST*),Bash(gh *://*),Bash(gh *github.com*),Bash(gh *--search*),Bash(gh * -S*)"
-          { echo "pr=$PR"; echo "debug=$DEBUG"; echo "submit=$SUBMIT"; echo "comments=$COMMENTS"; echo "reply=$REPLY"; echo "read_list=$READ_LIST"; echo "settings=$SETTINGS"; echo "guard=$GUARD"; echo "payload=$PAYLOAD"; echo "plugin_arg=$PLUGIN_ARG"; echo "reviewer_re=$REVIEWER_RE"; echo "deny=$DENY"; } >> "$GITHUB_OUTPUT"
+          DENY="Task,Agent,Workflow,Monitor,SendMessage,ListAgents,TaskStop,CronCreate,CronDelete,CronList,ScheduleWakeup,PushNotification,RemoteTrigger,EnterWorktree,ExitWorktree,DesignSync,ReportFindings,Skill,WebFetch,WebSearch,NotebookEdit,mcp__github_file_ops__commit_files,mcp__github_file_ops__delete_files,mcp__github_ci__download_job_log,Read(//proc/**),Read(/${RUNNER_TEMP}/**),Read(~/.*),Read(~/.*/**),Read(/${GITHUB_WORKSPACE}/.git/**),Read(/${GITHUB_WORKSPACE}/pr-head/.git/**),Edit(/${GITHUB_WORKSPACE}/**),Write(/${GITHUB_WORKSPACE}/**),Edit(/${RULES_DIR}/**),Write(/${RULES_DIR}/**),Edit(/${PLUGIN_DIR}/**),Write(/${PLUGIN_DIR}/**),Edit(/${TOOLS_DIR}/**),Write(/${TOOLS_DIR}/**),Read(/${GUARD}/**),Edit(/${GUARD}/**),Write(/${GUARD}/**),Bash(gh * -R*),Bash(gh * --repo*),Bash(*GH_REPO*),Bash(*GH_HOST*),Bash(gh *://*),Bash(gh *github.com*),Bash(gh *--search*),Bash(gh * -S*)"
+          { echo "pr=$PR"; echo "debug=$DEBUG"; echo "submit=$SUBMIT"; echo "comments=$COMMENTS"; echo "reply=$REPLY"; echo "read_list=$READ_LIST"; echo "settings=$SETTINGS"; echo "guard=$GUARD"; echo "payload=$PAYLOAD"; echo "plugin_arg=$PLUGIN_ARG"; echo "plugin_dir=$PLUGIN_DIR"; echo "tools_dir=$TOOLS_DIR"; echo "reviewer_re=$REVIEWER_RE"; echo "deny=$DENY"; } >> "$GITHUB_OUTPUT"
           echo "::notice::Reviewing PR #$PR (debug artifact: $DEBUG)"
 
       - name: Pin the PR head
@@ -312,7 +316,7 @@ jobs:
             } | sort -un
           ) || REVIEWS="?"
           if [ "$REVIEWS" = "?" ]; then R="?"; else R=$(printf '%s\n' "$REVIEWS" | grep -c '[0-9]' || true); fi
-          { echo "count=$((N + M))"; echo "reviews=$R"; } >> "$GITHUB_OUTPUT"
+          { echo "count=$((N + M))"; echo "reviews=$R"; echo "review_comments=$M"; } >> "$GITHUB_OUTPUT"
           echo "::notice::Claude comments before the review: $((N + M)); submitted reviews: $R"
 
       - name: Post the progress comment
@@ -507,6 +511,15 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Copy the plugin out of the workspace
+        if: env.REVIEW_OUTPUT_STYLE != ''
+        env:
+          PLUGIN_DIR: ${{ steps.resolve.outputs.plugin_dir }}
+        run: |
+          set -euo pipefail
+          rm -rf "${PLUGIN_DIR:?}"
+          cp -a "${GITHUB_WORKSPACE}/${REVIEW_PLUGIN_PATH}" "$PLUGIN_DIR"
+
       - name: Assert the output style resolves
         # A style that does not resolve falls back to the default silently, so prove it resolves:
         # the plugin name must match the manifest and the folder, the style name the file's
@@ -514,7 +527,7 @@ jobs:
         if: env.REVIEW_OUTPUT_STYLE != ''
         env:
           STYLE: ${{ env.REVIEW_OUTPUT_STYLE }}
-          PLUGIN_DIR: ${{ github.workspace }}/${{ env.REVIEW_PLUGIN_PATH }}
+          PLUGIN_DIR: ${{ steps.resolve.outputs.plugin_dir }}
         run: |
           set -euo pipefail
           case "$STYLE" in
@@ -600,15 +613,22 @@ jobs:
           sparse-checkout: .github/claude-review
 
       - name: Install Claude Code
+        id: install
         if: steps.cfg.outputs.mode == 'api'
+        env:
+          TOOLS_DIR: ${{ steps.resolve.outputs.tools_dir }}
         run: |
           set -euo pipefail
-          D="${GITHUB_WORKSPACE}/.claude-review-tools/.github/claude-review"
+          # ⚠️ Installed outside the workspace and never added to PATH (see the resolve step).
+          rm -rf "${TOOLS_DIR:?}"
+          mkdir -p "$TOOLS_DIR"
+          cp "${GITHUB_WORKSPACE}/.claude-review-tools/.github/claude-review/package.json" \
+             "${GITHUB_WORKSPACE}/.claude-review-tools/.github/claude-review/package-lock.json" "$TOOLS_DIR/"
           # No install scripts run except Claude Code's own, which copies the pinned binary.
-          npm ci --prefix "$D" --no-fund --no-audit --ignore-scripts
-          node "$D/node_modules/@anthropic-ai/claude-code/install.cjs"
-          "$D/node_modules/.bin/claude" --version
-          echo "$D/node_modules/.bin" >> "$GITHUB_PATH"
+          npm ci --prefix "$TOOLS_DIR" --no-fund --no-audit --ignore-scripts
+          node "$TOOLS_DIR/node_modules/@anthropic-ai/claude-code/install.cjs"
+          "$TOOLS_DIR/node_modules/.bin/claude" --version
+          echo "claude=$TOOLS_DIR/node_modules/.bin/claude" >> "$GITHUB_OUTPUT"
 
       - name: Review (api)
         id: review-api
@@ -640,7 +660,9 @@ jobs:
           ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
           REVIEWER_RE: ${{ steps.resolve.outputs.reviewer_re }}
           REVIEWS_BEFORE: ${{ steps.before.outputs.reviews }}
+          REVIEW_COMMENTS_BEFORE: ${{ steps.before.outputs.review_comments }}
           HAVE_OAUTH: ${{ secrets.claude-oauth-token != '' }}
+          CLAUDE_BIN: ${{ steps.install.outputs.claude }}
           # Test switch: "true" skips the api attempt and falls back, to prove the fallback live.
           FORCE_FALLBACK: ${{ vars.CLAUDE_REVIEW_TEST_FALLBACK }}
         run: |
@@ -677,7 +699,7 @@ jobs:
           # shellcheck disable=SC2086 # PLUGIN_ARG is empty or two words, by design
           env -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
               -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
-            claude -p "Review pull request ${PR} of ${GITHUB_REPOSITORY} now." \
+            "$CLAUDE_BIN" -p "Review pull request ${PR} of ${GITHUB_REPOSITORY} now." \
               --model "$MODEL" \
               --max-turns 150 \
               --permission-mode acceptEdits \
@@ -693,18 +715,36 @@ jobs:
               --disallowedTools "$DENY" \
               --append-system-prompt "$PROMPT" \
               --output-format stream-json --verbose \
-              > "${RUNNER_TEMP}/claude-execution-output.json" 2> >(tee "${RUNNER_TEMP}/claude-api-stderr.txt" >&2) \
+              > "${RUNNER_TEMP}/claude-execution-output.json" \
             && exit 0
-          # Fall back to oauth only on a billing refusal, and only if this attempt posted no review:
-          # any other failure fails here, so a review is never paid or posted twice.
-          RESULT=$(jq -s -r 'flatten | map(select(type == "object" and .type == "result")) | last | .result // ""' \
-                     "${RUNNER_TEMP}/claude-execution-output.json" 2>/dev/null) || RESULT=""
-          if ! printf '%s\n' "$RESULT" "$(cat "${RUNNER_TEMP}/claude-api-stderr.txt" 2>/dev/null)" \
-               | grep -q -i -E 'credit balance|insufficient (credits?|balance|funds)|payment required|billing'; then
-            echo "::error::the api review failed, and not for billing; no fallback"
+          # Fall back to oauth only on a billing refusal, and only if this attempt posted nothing:
+          # any other failure fails here, so a review is never paid or posted twice. ⚠️ Billing is
+          # decided by the API's own answer to a one-token probe sent by this step, never from
+          # anything Claude wrote, which a prompt injection controls.
+          probe_billing() {
+            local at resp code
+            fetch_token || return 1
+            at=$(jq -n --rawfile a "$TOK" --arg r "$ANTHROPIC_FEDERATION_RULE_ID" --arg o "$ANTHROPIC_ORGANIZATION_ID" \
+                    --arg s "$ANTHROPIC_SERVICE_ACCOUNT_ID" --arg w "$ANTHROPIC_WORKSPACE_ID" \
+                    '{grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: $a, federation_rule_id: $r,
+                      organization_id: $o, service_account_id: $s, workspace_id: $w}' \
+                 | curl -sS https://api.anthropic.com/v1/oauth/token -H 'content-type: application/json' -d @- \
+                 | jq -r '.access_token // empty') || return 1
+            [ -n "$at" ] || return 1
+            echo "::add-mask::${at}"
+            resp=$(jq -n --arg m "$MODEL" '{model: $m, max_tokens: 1, messages: [{role: "user", content: "ping"}]}' \
+                   | curl -sS -w '\n%{http_code}' https://api.anthropic.com/v1/messages -d @- \
+                       -H "authorization: Bearer ${at}" -H 'anthropic-version: 2023-06-01' -H 'content-type: application/json') || return 1
+            code=${resp##*$'\n'}
+            case "$code" in 400|402) : ;; *) return 1 ;; esac
+            printf '%s' "${resp%$'\n'*}" | jq -e '(.error.message // "") | test("credit balance|billing"; "i")' >/dev/null
+          }
+          if ! probe_billing; then
+            echo "::error::the api review failed, and the API does not report a billing problem; no fallback"
             exit 1
           fi
-          # Same count as the baseline step. grep -c exits 1 on zero, so it runs outside $( ).
+          # Nothing posted: no new submitted review and no new review comment (replies included).
+          # grep -c exits 1 on zero, so it runs outside $( ).
           IDS=$(
             {
               gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}/reviews" --paginate \
@@ -714,8 +754,11 @@ jobs:
             } | sort -un
           ) || IDS="?"
           if [ "$IDS" = "?" ]; then NOW="?"; else NOW=$(printf '%s\n' "$IDS" | grep -c '[0-9]' || true); fi
-          if [ "$NOW" = "?" ] || [ "$REVIEWS_BEFORE" = "?" ] || [ "$NOW" -ne "$REVIEWS_BEFORE" ]; then
-            echo "::error::the api review hit a billing error after it may have posted (reviews: $REVIEWS_BEFORE -> $NOW); no fallback"
+          RC_NOW=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}/comments" --paginate \
+                     --jq '[.[] | select(.user.login | test(env.REVIEWER_RE; "i"))] | length' | awk '{s+=$1} END{print s+0}') || RC_NOW="?"
+          if [ "$NOW" = "?" ] || [ "$REVIEWS_BEFORE" = "?" ] || [ "$NOW" -ne "$REVIEWS_BEFORE" ] \
+             || [ "$RC_NOW" = "?" ] || [ "$RC_NOW" -ne "$REVIEW_COMMENTS_BEFORE" ]; then
+            echo "::error::the api review hit a billing error after it may have posted (reviews $REVIEWS_BEFORE -> $NOW, review comments $REVIEW_COMMENTS_BEFORE -> $RC_NOW); no fallback"
             exit 1
           fi
           [ "$HAVE_OAUTH" = true ] || { echo "::error::the API refused the review for billing, and there is no claude-oauth-token to fall back to"; exit 1; }
