@@ -74,10 +74,6 @@ on:
         description: "`auth: api` only. The workspace id (wrkspc_...). Usage bills to this workspace."
         type: string
         default: ""
-      model:
-        description: "The `--model` value."
-        type: string
-        default: claude-opus-5
       timeout-minutes:
         description: "The review job's timeout."
         type: number
@@ -127,6 +123,9 @@ jobs:
       # not set a concurrency group of the same name, or the two wait on each other.
       cancel-in-progress: false
     env:
+      # The review model, for every caller on both paths. Deliberately NOT an input: the model
+      # is set here and only here, so no repo can override it.
+      REVIEW_MODEL: claude-opus-5-5
       # The ONE place this id is written. The resolve step puts it in the settings JSON, and
       # the "Assert the output style resolves" step proves it against the plugin checkout, so
       # the two cannot drift into the silent-default failure described there. Empty means
@@ -150,7 +149,7 @@ jobs:
         # `if:` cannot read `secrets`, so the values come in through env.
         env:
           AUTH: ${{ inputs.auth }}
-          MODEL: ${{ inputs.model }}
+          MODEL: ${{ env.REVIEW_MODEL }}
           HAVE_APP_ID: ${{ secrets.app-client-id != '' }}
           HAVE_APP_KEY: ${{ secrets.app-private-key != '' }}
           HAVE_OAUTH: ${{ secrets.claude-oauth-token != '' }}
@@ -926,13 +925,13 @@ jobs:
           # --max-turns is a review-QUALITY setting (reading a multi-file diff + anchoring
           # findings + one grouped review costs many turns); 150 keeps headroom inside the
           # default 30-min job timeout.
-          # --model comes from the `model` input; the first step checked it is one token.
+          # --model is REVIEW_MODEL, set once in the job env; the first step checked it is one token.
           # The plugin argument is `--plugin-dir <Simple English checkout>` when the caller
           # set an output style, and empty otherwise (built in the resolve step). Never set
           # `--permission-mode` (see above).
           claude_args: |
             --max-turns 150
-            --model ${{ inputs.model }}
+            --model ${{ env.REVIEW_MODEL }}
             --add-dir pr-head
             --add-dir ${{ steps.rules.outputs.dir }}
             --add-dir ${{ steps.resolve.outputs.payload }}
@@ -965,7 +964,7 @@ jobs:
           GH_TOKEN: ${{ steps.review-token.outputs.token }}
           PR: ${{ steps.resolve.outputs.pr }}
           PIN: ${{ steps.pin.outputs.sha }}
-          MODEL: ${{ inputs.model }}
+          MODEL: ${{ env.REVIEW_MODEL }}
           SETTINGS: ${{ steps.resolve.outputs.settings }}
           DENY: ${{ steps.resolve.outputs.deny }}
           PLUGIN_ARG: ${{ steps.resolve.outputs.plugin_arg }}

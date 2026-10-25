@@ -71,11 +71,13 @@ disagree about posting, the recipe wins, because the guard enforces it. The reci
 | `anthropic-organization-id` | empty | `auth: api` only. The Anthropic organization ID. |
 | `anthropic-service-account-id` | empty | `auth: api` only. The service account ID (`svac_...`). |
 | `anthropic-workspace-id` | empty | `auth: api` only. The workspace ID (`wrkspc_...`). Usage bills to it. |
-| `model` | `claude-opus-5` | The `--model` value: one model ID or alias. |
 | `timeout-minutes` | `30` | The job timeout. |
 | `runs-on` | `ubuntu-latest` | The runner label. |
 | `exclude-comments-by-actor` | `greptile-apps[bot],codecov[bot]` | Logins whose comments stay out of Claude's context. |
 | `output-style` | empty | A Simple English output style, for example `simple-english:simple-english`. Empty means no plugin. |
+
+The model is not an input. Every review runs `claude-opus-5-5`, set once as `REVIEW_MODEL` in
+the workflow, so no repo can override it. A caller that still passes `model:` fails.
 
 ### Secrets
 
