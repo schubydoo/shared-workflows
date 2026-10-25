@@ -44,7 +44,7 @@ jobs:
     secrets:
       app-client-id: ${{ secrets.EXAMPLE_CI_CLIENT_ID }}
       app-private-key: ${{ secrets.EXAMPLE_CI_APP_PRIVATE_KEY }}
-      # Only for the `auth: oauth` fallback.
+      # For the oauth path and the fallback from api.
       claude-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
@@ -76,18 +76,38 @@ Every review uses the same settings, set in the workflow:
 | Runner | `ubuntu-latest` |
 | Comments kept out of Claude's context | `greptile-apps[bot]`, `codecov[bot]` |
 
-The one input is `auth`. Its default is `api`. A repo sets `auth: oauth` under `with:` only to
-fall back to the subscription path.
+The workflow has no inputs. The caller passes only its secrets.
 
 ### The two billing paths
 
-`auth: api` (the default) runs `claude -p` from a workflow step, with Claude Code pinned by
+`api` (the default) runs `claude -p` from a workflow step, with Claude Code pinned by
 `.github/claude-review/package-lock.json`. Anthropic counts it as Agent SDK usage, which the
 plan's API credits cover. It signs in with Workload Identity Federation, so no Claude credential
 is stored. The review posts as the repo's CI App, with a progress comment.
 
-`auth: oauth` runs `claude-code-action` on `CLAUDE_CODE_OAUTH_TOKEN`. Anthropic counts it as
-Claude Code usage, on the subscription. The review posts as `claude[bot]`.
+`oauth` runs `claude-code-action` on `CLAUDE_CODE_OAUTH_TOKEN`. Anthropic counts it as Claude
+Code usage, on the subscription. The review posts as `claude[bot]`.
+
+The repo variable `CLAUDE_REVIEW_AUTH` picks the path, with no commit. When the variable is
+unset, the path is `api`.
+
+```bash
+gh variable set CLAUDE_REVIEW_AUTH -R schubydoo/<repo> --body oauth   # use the subscription
+gh variable delete CLAUDE_REVIEW_AUTH -R schubydoo/<repo>             # back to api
+```
+
+### Automatic fallback
+
+The `api` path can fall back on its own. If the API refuses the run for billing, for example
+with "Credit balance is too low", the same job runs the review again on the `oauth` path. Two
+conditions must hold: the `api` attempt posted no review, and the repo has
+`CLAUDE_CODE_OAUTH_TOKEN`. Any other failure fails the job, so a review is never paid for or posted
+twice. If a review fell back, the progress comment says so. Once the credits are gone for good,
+set `CLAUDE_REVIEW_AUTH` to `oauth` to skip the failing first attempt.
+
+To test the fallback without spending the credits, set the repo variable
+`CLAUDE_REVIEW_TEST_FALLBACK` to `true`. The job then skips the `api` attempt and falls back.
+Delete the variable after the test.
 
 ### The federation rule for each repo
 
