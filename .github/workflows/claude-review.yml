@@ -769,7 +769,7 @@ jobs:
         id: review
         # The oauth path, or the fallback when the api path ran out of credits.
         if: steps.cfg.outputs.mode == 'oauth' || steps.review-api.outputs.fallback == 'true'
-        uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
+        uses: anthropics/claude-code-action@8041f1d17e0e7d2f2cfe35002962e9f26237c0bb # v1.0.263
         with:
           claude_code_oauth_token: ${{ secrets.claude-oauth-token }}
           trigger_phrase: "@claude review"
