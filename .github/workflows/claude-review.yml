@@ -200,7 +200,7 @@ jobs:
             fi
           done < "$1"
           echo "refused: only the exact review commands in the system prompt may run" >&2
-          exit 2
+          exit 1
           GUARD_EOF
           # Self-test payloads, in the guard folder Claude cannot reach. Never in the payload folder.
           C='{"event":"COMMENT","body":"x","commit_id":"x","comments":[]}'
