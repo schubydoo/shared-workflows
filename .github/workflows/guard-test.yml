@@ -1,0 +1,104 @@
+name: Guard test
+
+# Tests the review workflow's guard on each pull request, so that a claude-code-action bump
+# or a CLI bump that changes how the deny rules behave turns the PR red.
+#
+# - guard self-test: no model and no secret, on every PR. The resolve step's own guard
+#   self-test, three broken guards that must fail it, the pin check, and the CLI versions
+#   that the pins install (with a hash of the action's tag-mode tool list).
+# - guard headless: a model makes each call in .github/guard-test/calls.json against each
+#   pinned CLI version. It runs only when the PR changes the review workflow, its CLI pin or
+#   this test, and it fails when it must run and has no credential. On any other PR it
+#   passes at once, so both checks report on every PR and either can be required.
+# See the "Guard test" section of README.md.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guard-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    name: guard self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Install PyYAML
+        run: |
+          set -euo pipefail
+          uv venv "$RUNNER_TEMP/venv"
+          uv pip install --python "$RUNNER_TEMP/venv" "pyyaml==6.0.2"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+      - name: Run the self-test
+        run: bash .github/guard-test/selftest.sh .github/workflows/claude-review.yml
+      - name: Read the pinned CLI versions
+        run: bash .github/guard-test/versions.sh .github/workflows/claude-review.yml .github/claude-review/package.json
+
+  headless:
+    name: guard headless
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Decide whether this PR needs the headless test
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          files=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}/files" --paginate --jq '.[].filename')
+          if printf '%s\n' "$files" | command grep -qE '^\.github/(workflows/(claude-review|guard-test)\.yml|claude-review/package(-lock)?\.json|guard-test/)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::this PR does not change the review workflow, its CLI pin or the guard test"
+          fi
+      - name: Require a credential
+        if: steps.scope.outputs.run == 'true'
+        env:
+          HAVE_KEY: ${{ secrets.GUARD_TEST_ANTHROPIC_API_KEY != '' }}
+        run: |
+          [ "$HAVE_KEY" = true ] || { echo "::error::this PR changes the review guard, and the GUARD_TEST_ANTHROPIC_API_KEY secret is empty, so the guard cannot be tested"; exit 1; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.scope.outputs.run == 'true'
+        with:
+          persist-credentials: false
+      - name: Set up uv
+        if: steps.scope.outputs.run == 'true'
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Install PyYAML
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          uv venv "$RUNNER_TEMP/venv"
+          uv pip install --python "$RUNNER_TEMP/venv" "pyyaml==6.0.2"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+      - name: Run the headless test on each pinned CLI version
+        if: steps.scope.outputs.run == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.GUARD_TEST_ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+          versions=$(bash .github/guard-test/versions.sh .github/workflows/claude-review.yml .github/claude-review/package.json)
+          fails=0
+          for v in $versions; do
+            bash .github/guard-test/headless.sh .github/workflows/claude-review.yml "$v" || fails=$((fails + 1))
+          done
+          [ "$fails" -eq 0 ] || { echo "::error::$fails CLI version(s) failed the headless guard test"; exit 1; }

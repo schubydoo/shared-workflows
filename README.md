@@ -142,6 +142,48 @@ repo therefore cannot run its own version. To test a change before it merges:
    change takes effect only after it merges into that repo's default branch.
 3. Comment `@claude review debug` on a throwaway pull request there.
 
+## Guard test
+
+The `Guard test` workflow tests the review's guard on each pull request. A guard is the set of
+deny rules and the Bash hook that limit what Claude can read, write and run. The workflow has
+two jobs.
+
+The `guard self-test` job needs no model and no secret, and it runs on every pull request:
+
+- It runs the resolve step with its own guard self-test.
+- It breaks the guard in three ways, and each broken copy must fail that self-test.
+- It runs the pin check on a matching commit and on five kinds of drift.
+- It reads the CLI version that each pin installs. If the action's tag-mode tool list
+  changed, it fails, because a tool that the action adds by itself is not in the deny list.
+
+The `guard headless` job has work only on some pull requests: those that change
+`claude-review.yml`, the CLI pin in `.github/claude-review/`, or the test itself. On other pull
+requests, it passes at once. On each pinned CLI version, a model makes each
+call in `.github/guard-test/calls.json` once, in three runs:
+
+- `guard`: the rendered rules. Each bad call is denied, and each good call succeeds.
+- `control`: no deny rules and no hook. The bad calls succeed, so the rules are what block.
+- `mutant`: one rule with a slash missing. The calls that it covered get through.
+
+A run that skips a call or makes an unlisted call runs once more. If it is still incomplete,
+the job fails. A wrong result fails at once. The job needs the `GUARD_TEST_ANTHROPIC_API_KEY`
+secret. If that secret is empty, the job fails. Each CLI version costs about $0.15.
+
+To run the tests locally, install PyYAML, then run these commands from the repo root:
+
+```bash
+bash .github/guard-test/selftest.sh .github/workflows/claude-review.yml
+bash .github/guard-test/versions.sh .github/workflows/claude-review.yml .github/claude-review/package.json
+bash .github/guard-test/headless.sh .github/workflows/claude-review.yml <cli-version>
+```
+
+For credentials, `headless.sh` uses the `ANTHROPIC_API_KEY` variable. Without that variable,
+the script uses your local Claude Code login. The
+scripts work in a new temporary folder. A stub `sudo` keeps the resolve step out of
+`/etc/claude-code`, because your own Claude Code reads that folder too. The CLI runs under
+`env -i` with `--setting-sources project --strict-mcp-config`, so your own settings do not
+reach it.
+
 ## Linting
 
 The `Lint` workflow runs `actionlint` and `zizmor` on every pull request. To run them locally:
