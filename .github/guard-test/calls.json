@@ -1,6 +1,7 @@
 {
-  "comment": "One list feeds the prompt (headless.sh) and the assertions (check.py). guard: the expected result with the rendered deny rules and guard hook. control: the expected result with neither. 'any' is a call the CLI refuses on its own (the Read tool never reads /proc, and headless mode denies a Bash command that needs approval). mutant: true marks a call that the one-slash-fewer runner-temp rule stops blocking.",
+  "comment": "One list feeds the prompt (headless.sh) and the assertions (check.py). guard: the expected result with the rendered deny rules and guard hook. control: the expected result with neither. 'any' is a call the CLI refuses on its own (the Read tool never reads /proc, and headless mode denies a Bash command that needs approval). mutant: true marks a call that the one-slash-fewer runner-temp rule stops blocking. tools: what the oauth path offers. api_tools: what the api path offers (its --tools list).",
   "tools": ["Bash", "Edit", "Glob", "Grep", "Read", "ToolSearch", "Write"],
+  "api_tools": ["Bash", "Edit", "Glob", "Grep", "Read", "Write"],
   "calls": [
     {"tool": "Read", "arg": "{T}/secret.txt", "guard": "deny", "control": "allow", "mutant": true},
     {"tool": "Read", "arg": "/proc/self/environ", "guard": "deny", "control": "any"},
