@@ -1,6 +1,8 @@
 """Check one headless run against calls.json.
 
-usage: check.py <guard|control|mutant> <run.jsonl> <calls.json> <vars.json>
+usage: check.py <guard|control|mutant|api> <run.jsonl> <calls.json> <vars.json>
+
+api expects the guard results, with the api path's tool list.
 
 Exit 0: every call ran once or more and got its expected result.
 Exit 1: a call got the wrong result. Never retried: this is the failure the test exists for.
@@ -48,13 +50,14 @@ if final is None or init is None:
 wrong, unstable = [], []
 denied = {d["tool_use_id"] for d in final.get("permission_denials", [])}
 tools = sorted(init.get("tools", []))
-if mode != "control" and tools != sorted(spec["tools"]):
-    wrong.append(f"the CLI offers tools {tools}, expected {sorted(spec['tools'])}: deny any new tool")
+expected = sorted(spec["api_tools" if mode == "api" else "tools"])
+if mode != "control" and tools != expected:
+    wrong.append(f"the CLI offers tools {tools}, expected {expected}: deny any new tool")
 
 matched = set()
 for n, call in enumerate(spec["calls"], 1):
     arg = norm(call["tool"], call["arg"].format(**names))
-    want = call["guard"] if mode == "guard" else call["control"] if mode == "control" else ("allow" if call.get("mutant") else call["guard"])
+    want = call["guard"] if mode in ("guard", "api") else call["control"] if mode == "control" else ("allow" if call.get("mutant") else call["guard"])
     hits = [u for u in uses if u["name"] == call["tool"] and norm(call["tool"], str(u["input"].get(ARG_KEYS[call["tool"]], ""))) == arg]
     matched.update(u["id"] for u in hits)
     if not hits:
@@ -71,7 +74,7 @@ for u in uses:
     if u["id"] not in matched:
         unstable.append(f"the model made an unlisted call: {u['name']} {json.dumps(u['input'])[:200]}")
 
-if mode == "guard":
+if mode in ("guard", "api"):
     # Nothing a denied call protects may reach the model by any route.
     for u in uses:
         if "FAKE-" in results.get(u["id"], (False, ""))[1]:

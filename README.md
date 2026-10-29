@@ -159,15 +159,18 @@ The `guard self-test` job needs no model and no secret, and it runs on every pul
 The `guard headless` job has work only on some pull requests: those that change
 `claude-review.yml`, the CLI pin in `.github/claude-review/`, or the test itself. On other pull
 requests, it passes at once. On each pinned CLI version, a model makes each
-call in `.github/guard-test/calls.json` once, in three runs:
+call in `.github/guard-test/calls.json` once, in four runs:
 
-- `guard`: the rendered rules. Each bad call is denied, and each good call succeeds.
+- `guard`: the `oauth` path's flags, with the rendered rules. Each bad call is denied, and each
+  good call succeeds.
 - `control`: no deny rules and no hook. The bad calls succeed, so the rules are what block.
 - `mutant`: one rule with a slash missing. The calls that it covered get through.
+- `api`: the `api` path's flags, with the rendered rules. The results are the same as in
+  `guard`.
 
 A run that skips a call or makes an unlisted call runs once more. If it is still incomplete,
 the job fails. A wrong result fails at once. The job needs the `GUARD_TEST_ANTHROPIC_API_KEY`
-secret. If that secret is empty, the job fails. Each CLI version costs about $0.15.
+secret. If that secret is empty, the job fails. Each CLI version costs about $0.12.
 
 To run the tests locally, install PyYAML, then run these commands from the repo root:
 
@@ -178,8 +181,9 @@ bash .github/guard-test/headless.sh .github/workflows/claude-review.yml <cli-ver
 ```
 
 For credentials, `headless.sh` uses the `ANTHROPIC_API_KEY` variable. Without that variable,
-the script uses your local Claude Code login. The
-scripts work in a new temporary folder. A stub `sudo` keeps the resolve step out of
+the script uses your local Claude Code login and skips the `api` run. That run reads user
+settings, so your own settings and hooks can reach it. The scripts work in a new temporary
+folder. A stub `sudo` keeps the resolve step out of
 `/etc/claude-code`, because your own Claude Code reads that folder too. The CLI runs under
 `env -i` with `--setting-sources project --strict-mcp-config`, so your own settings do not
 reach it.

@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # usage: headless.sh <workflow.yml> <cli-version>
 # Installs that Claude Code CLI version, then asks a model to make each call in calls.json
-# once, with the flags the workflow renders. Three runs:
-#   guard    the rendered deny rules and guard hook: bad calls denied, good calls succeed
+# once, with the flags the workflow renders. Four runs:
+#   guard    the oauth path's flags, with the rendered deny rules and guard hook: bad calls
+#            denied, good calls succeed
 #   control  neither: the same bad calls succeed, so the rules are what block them
 #   mutant   the runner-temp rule with one slash fewer: the calls it covered get through
+#   api      the api path's flags (--tools, --setting-sources user, one --disallowedTools
+#            string): the same results as guard
 # Each run that comes back incomplete is run once more. A wrong result is never retried.
 # Credentials: ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN if set (CI), else the local login.
+# The api run reads user settings, so it runs only with a token and a fake home. On the local
+# login it is skipped, because the developer's own settings and hooks would reach it.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 WORKFLOW=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
@@ -70,27 +75,41 @@ run() {
       [[ "$deny" == *"Read(/${T}/**)"* ]] || { echo "::error::the runner-temp deny rule is missing, so the mutant cannot apply"; return 1; }
       deny=${deny//"Read(/${T}/**)"/"Read(${T}/**)"} ;;
   esac
-  local -a dargs=()
-  [ -z "$deny" ] || { IFS=, read -r -a dargs <<<"$deny"; dargs=(--disallowedTools "${dargs[@]}"); }
+  local -a args=()
+  if [ "$mode" = api ]; then
+    # As the review-api step passes them (extract.py fails if the step changes them).
+    args=(--permission-mode acceptEdits --setting-sources user --strict-mcp-config
+      --settings "$settings" --add-dir pr-head --add-dir "$RU" --add-dir "$P"
+      --tools "$(cat "$ROOT/x/api-tools.txt")" --allowedTools "$(cat "$ROOT/x/api-allowed.txt")"
+      --disallowedTools "$deny")
+  else
+    # As claude-code-action passes them: tag mode's tools, then claude_args split on commas.
+    args=(--setting-sources project --strict-mcp-config --permission-mode acceptEdits
+      --allowedTools "${TAG_ALLOW[@]}" --add-dir pr-head --add-dir "$RU" --add-dir "$P"
+      --allowedTools "${ACTION_ALLOW[@]}")
+    if [ -n "$deny" ]; then
+      local -a dsplit; IFS=, read -r -a dsplit <<<"$deny"; args+=(--disallowedTools "${dsplit[@]}")
+    fi
+    args+=(--settings "$settings")
+  fi
   rm -f "$W/pwned.txt" "$RU/pwned.md" "$P/review.json"
   (cd "$W" && env -i HOME="$RUN_HOME" PATH="$PATH" TERM=dumb "${AUTH_ENV[@]}" \
-    "$CLAUDE" -p "$PROMPT" --model "$MODEL" --max-turns 40 \
-    --setting-sources project --strict-mcp-config --permission-mode acceptEdits \
-    --allowedTools "${TAG_ALLOW[@]}" \
-    --add-dir pr-head --add-dir "$RU" --add-dir "$P" \
-    --allowedTools "${ACTION_ALLOW[@]}" \
-    "${dargs[@]}" --settings "$settings" \
+    "$CLAUDE" -p "$PROMPT" --model "$MODEL" --max-turns 40 "${args[@]}" \
     --output-format stream-json --verbose > "$out" 2> "$out.err") \
     || { echo "::warning::$mode: the CLI exited non-zero: $(tail -c 400 "$out.err")"; }
   python3 "$HERE/check.py" "$mode" "$out" "$HERE/calls.json" "$ROOT/vars.json"
 }
 
-fails=0
-for mode in guard control mutant; do
+fails=0 modes=(guard control mutant api)
+if [ "$RUN_HOME" != "$ROOT/home" ]; then
+  echo "::warning::CLI $V: the api run needs ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN, so it is skipped"
+  modes=(guard control mutant)
+fi
+for mode in "${modes[@]}"; do
   echo "== CLI $V, $mode run"
   rc=0; run "$mode" || rc=$?
   if [ "$rc" -eq 3 ]; then echo "$mode: incomplete, running it once more"; rc=0; run "$mode" || rc=$?; fi
   [ "$rc" -eq 0 ] || fails=$((fails + 1))
 done
-[ "$fails" -eq 0 ] || { echo "::error::CLI $V: $fails of 3 headless runs failed"; exit 1; }
-echo "CLI $V: guard, control and mutant runs passed"
+[ "$fails" -eq 0 ] || { echo "::error::CLI $V: $fails of ${#modes[@]} headless runs failed"; exit 1; }
+echo "CLI $V: ${modes[*]} runs passed"
