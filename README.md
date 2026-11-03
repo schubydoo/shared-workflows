@@ -15,8 +15,14 @@ approves or requests changes.
 
 ### Caller file
 
-Every repo uses this file as `.github/workflows/claude-review.yml`, unchanged except for `<sha>`
-and the two App secret names. All settings live in this repo, so a caller passes no inputs.
+Every repo uses this file as `.github/workflows/claude-review.yml`, unchanged except for `<sha>`,
+`<tag>` and the two App secret names. All settings live in this repo, so a caller passes no inputs.
+
+The `tag.yml` workflow tags each push to `main` with the next patch version (`v1.0.0`, `v1.0.1`,
+and so on). Pin the caller to the commit SHA of a tag, with the tag in the comment. Renovate then
+bumps the pin by tag. Do not write `# main` in the comment. zizmor's `ref-version-mismatch` audit
+reads that branch at scan time. If a merge here comes between the pin bump and the scan, the
+caller gets a false alert.
 
 ```yaml
 name: Claude review
@@ -40,7 +46,7 @@ jobs:
       issues: write
       id-token: write
       actions: read
-    uses: schubydoo/shared-workflows/.github/workflows/claude-review.yml@<sha> # main
+    uses: schubydoo/shared-workflows/.github/workflows/claude-review.yml@<sha> # <tag>
     secrets:
       app-client-id: ${{ secrets.EXAMPLE_CI_CLIENT_ID }}
       app-private-key: ${{ secrets.EXAMPLE_CI_APP_PRIVATE_KEY }}
