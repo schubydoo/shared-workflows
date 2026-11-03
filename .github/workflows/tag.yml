@@ -1,0 +1,52 @@
+name: Tag
+
+# Tags each push to main with the next patch version (v1.0.0, v1.0.1, ...).
+#
+# The callers pin claude-review.yml as `@<sha> # v1.0.N`. zizmor's ref-version-mismatch
+# audit resolves the ref in that comment. A branch name such as `main` moves on each merge,
+# so a caller PR opened a few minutes before a merge got a false alert. A tag does not move.
+# Renovate reads the tags and bumps the callers.
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+# One run at a time, so two quick merges cannot compute the same next tag.
+concurrency:
+  group: tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # create the tag ref
+    steps:
+      - name: Create the next patch tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          tags=$(gh api --paginate "repos/${REPO}/git/matching-refs/tags/v" \
+            --jq '.[] | select(.object.type == "commit") | "\(.ref | ltrimstr("refs/tags/")) \(.object.sha)"')
+          if printf '%s\n' "$tags" | awk -v s="$SHA" '$2 == s { found = 1 } END { exit !found }'; then
+            echo "${SHA} already has a tag. Nothing to do."
+            exit 0
+          fi
+          latest=$(printf '%s\n' "$tags" | awk '{ print $1 }' \
+            | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -n 1)
+          if [ -z "$latest" ]; then
+            next="v1.0.0"
+          else
+            IFS=. read -r major minor patch <<<"${latest#v}"
+            next="v${major}.${minor}.$((patch + 1))"
+          fi
+          gh api "repos/${REPO}/git/refs" -f ref="refs/tags/${next}" -f sha="${SHA}" >/dev/null
+          echo "Tagged ${SHA} as ${next}."
+          echo "Tagged \`${SHA}\` as \`${next}\`." >>"$GITHUB_STEP_SUMMARY"
