@@ -175,8 +175,13 @@ call in `.github/guard-test/calls.json` once, in four runs:
   `guard`.
 
 A run that skips a call or makes an unlisted call runs once more. If it is still incomplete,
-the job fails. A wrong result fails at once. The job needs the `GUARD_TEST_ANTHROPIC_API_KEY`
-secret. If that secret is empty, the job fails. Each CLI version costs about $0.12.
+the job fails. A wrong result fails at once. Each CLI version costs about $0.12.
+
+The job uses the `GUARD_TEST_ANTHROPIC_API_KEY` secret first. Before the runs, a one-token
+request tests that key. If the API refuses the key for billing, or the secret is empty, all
+runs use the `GUARD_TEST_CLAUDE_OAUTH_TOKEN` secret instead. That secret is a subscription token
+from `claude setup-token`. The job then shows a warning. If the API gives any other error, or
+both secrets are empty, the job fails.
 
 To run the tests locally, install PyYAML, then run these commands from the repo root:
 

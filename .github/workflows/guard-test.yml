@@ -8,7 +8,8 @@ name: Guard test
 #   that the pins install (with a hash of the action's tag-mode tool list).
 # - guard headless: a model makes each call in .github/guard-test/calls.json against each
 #   pinned CLI version. It runs only when the PR changes the review workflow, its CLI pin or
-#   this test, and it fails when it must run and has no credential. On any other PR it
+#   this test, and it fails when it must run and has no credential. It uses API credits
+#   and falls back to the subscription when the API refuses for billing. On any other PR it
 #   passes at once, so both checks report on every PR and either can be required.
 # See the "Guard test" section of README.md.
 
@@ -70,12 +71,39 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
             echo "::notice::this PR does not change the review workflow, its CLI pin or the guard test"
           fi
-      - name: Require a credential
+      # The API key first. If the API refuses it for billing, the subscription token instead,
+      # for every CLI version. Any other API error fails here, so a bad key never falls back.
+      - name: Pick a credential
+        id: cred
         if: steps.scope.outputs.run == 'true'
         env:
-          HAVE_KEY: ${{ secrets.GUARD_TEST_ANTHROPIC_API_KEY != '' }}
+          API_KEY: ${{ secrets.GUARD_TEST_ANTHROPIC_API_KEY }}
+          HAVE_OAUTH: ${{ secrets.GUARD_TEST_CLAUDE_OAUTH_TOKEN != '' }}
         run: |
-          [ "$HAVE_KEY" = true ] || { echo "::error::this PR changes the review guard, and the GUARD_TEST_ANTHROPIC_API_KEY secret is empty, so the guard cannot be tested"; exit 1; }
+          set -euo pipefail
+          oauth() {
+            [ "$HAVE_OAUTH" = true ] || { echo "::error::$1, and the GUARD_TEST_CLAUDE_OAUTH_TOKEN secret is empty, so the guard cannot be tested"; exit 1; }
+            echo "::warning::$1; the headless test runs on the subscription (GUARD_TEST_CLAUDE_OAUTH_TOKEN)"
+            echo "auth=oauth" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          [ -n "$API_KEY" ] || oauth "the GUARD_TEST_ANTHROPIC_API_KEY secret is empty"
+          resp=$(jq -n '{model: "claude-sonnet-5-5", max_tokens: 1, messages: [{role: "user", content: "ping"}]}' \
+                 | curl -sS -w '\n%{http_code}' https://api.anthropic.com/v1/messages -d @- \
+                     -H "x-api-key: ${API_KEY}" -H 'anthropic-version: 2023-06-01' -H 'content-type: application/json') \
+            || { echo "::error::the API probe could not reach api.anthropic.com"; exit 1; }
+          code=${resp##*$'\n'} body=${resp%$'\n'*}
+          if [ "$code" = 200 ]; then
+            echo "::notice::the headless test runs on API credits (GUARD_TEST_ANTHROPIC_API_KEY)"
+            echo "auth=api" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          case "$code" in
+            400|402) printf '%s' "$body" | jq -e '(.error.message // "") | test("credit balance|billing"; "i")' >/dev/null \
+                       && oauth "the API refused GUARD_TEST_ANTHROPIC_API_KEY for billing" ;;
+          esac
+          echo "::error::the API probe failed with HTTP $code: $(printf '%s' "$body" | jq -r '.error.message // empty' 2>/dev/null | head -c 300)"
+          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.scope.outputs.run == 'true'
         with:
@@ -93,9 +121,19 @@ jobs:
       - name: Run the headless test on each pinned CLI version
         if: steps.scope.outputs.run == 'true'
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.GUARD_TEST_ANTHROPIC_API_KEY }}
+          AUTH: ${{ steps.cred.outputs.auth }}
+          API_KEY: ${{ secrets.GUARD_TEST_ANTHROPIC_API_KEY }}
+          OAUTH_TOKEN: ${{ secrets.GUARD_TEST_CLAUDE_OAUTH_TOKEN }}
         run: |
           set -euo pipefail
+          # headless.sh takes ANTHROPIC_API_KEY first, so only the picked credential is exported.
+          unset ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN
+          case "$AUTH" in
+            api) export ANTHROPIC_API_KEY="$API_KEY" ;;
+            oauth) export CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" ;;
+            *) echo "::error::no credential was picked"; exit 1 ;;
+          esac
+          unset API_KEY OAUTH_TOKEN
           versions=$(bash .github/guard-test/versions.sh .github/workflows/claude-review.yml .github/claude-review/package.json)
           fails=0
           for v in $versions; do
