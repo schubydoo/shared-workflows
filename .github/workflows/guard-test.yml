@@ -93,7 +93,11 @@ jobs:
                      -H "x-api-key: ${API_KEY}" -H 'anthropic-version: 2023-06-01' -H 'content-type: application/json') \
             || { echo "::error::the API probe could not reach api.anthropic.com"; exit 1; }
           code=${resp##*$'\n'} body=${resp%$'\n'*}
-          if [ "$code" = 200 ]; then echo "auth=api" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [ "$code" = 200 ]; then
+            echo "::notice::the headless test runs on API credits (GUARD_TEST_ANTHROPIC_API_KEY)"
+            echo "auth=api" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           case "$code" in
             400|402) printf '%s' "$body" | jq -e '(.error.message // "") | test("credit balance|billing"; "i")' >/dev/null \
                        && oauth "the API refused GUARD_TEST_ANTHROPIC_API_KEY for billing" ;;
