@@ -511,7 +511,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: AminBlg/SimpleEnglish
-          ref: 32ea2d3f4404bfbff162c1861e5ae4f1bcc628b3 # v2.1.1
+          ref: 300432a9e4c473229a7049ab61b8ca2522d9214c # v2.1.2
           path: ${{ env.REVIEW_PLUGIN_PATH }}
           fetch-depth: 1
           persist-credentials: false
