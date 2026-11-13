@@ -5,10 +5,10 @@
 # tool list file changed: a tool the action adds by itself is not covered by the deny list.
 set -euo pipefail
 WORKFLOW=$1 PACKAGE=$2
-# sha256 of src/modes/tag/index.ts at claude-code-action v1.0.264 (unchanged since v1.0.262).
-# If this fails, read that file's tagModeTools at the new pin, cover any new tool in the
-# deny list and in headless.sh, then record the new hash here.
-TAG_MODE_SHA256=7e732570534be83ff96526bc6e578d2dbd9b4b33dcb0768e685e171a518b2556
+# sha256 of src/modes/tag/index.ts at claude-code-action v1.0.275.
+# If this fails, read that file's tagModeTools and its permission mode at the new pin. Cover
+# any new tool in the deny list and in headless.sh, then record the new hash here.
+TAG_MODE_SHA256=1eb5030390926d65e8bf559abc139d89fd7bfa15a7967d668da8654f2a0fe56c
 mapfile -t shas < <(sed -n 's/.*uses: anthropics\/claude-code-action@\([0-9a-f]\{40\}\).*/\1/p' "$WORKFLOW")
 [ "${#shas[@]}" -eq 1 ] || { echo "::error::expected one claude-code-action pin in $WORKFLOW, found ${#shas[@]}" >&2; exit 1; }
 raw="https://raw.githubusercontent.com/anthropics/claude-code-action/${shas[0]}"
