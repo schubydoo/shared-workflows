@@ -201,12 +201,12 @@ reach it.
 
 ## Linting
 
-The `Lint` workflow runs `actionlint` and `zizmor` on every pull request. To run them locally:
+The `Lint` workflow runs [jactionlint](https://jactionlint.jdx.dev/) on every pull request.
+It does the actionlint checks and the zizmor audits in one run. To run it locally:
 
 ```bash
-actionlint
-uvx zizmor .
+uvx jactionlint --strict-exit --shellcheck shellcheck
 ```
 
-Put `shellcheck` on `PATH` first. Without it, `actionlint` skips the shell checks and does not
-warn you.
+Put `shellcheck` on `PATH` first. With `--shellcheck shellcheck`, a missing shellcheck stops
+the run.

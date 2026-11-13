@@ -10,14 +10,15 @@ repo. Never commit a secret, a host path, an IP address or a token.
 
 ## Lint
 
-Run both linters on every workflow file you change:
+Run jactionlint on every workflow file you change:
 
-- `uvx zizmor .github/workflows/<file>.yml` is the security audit.
-- `actionlint .github/workflows/<file>.yml` checks the schema, the expressions and the
-  embedded `run:` scripts.
+    uvx jactionlint --strict-exit --shellcheck shellcheck .github/workflows/<file>.yml
 
-Put `shellcheck` on `PATH` before you run `actionlint`. Without it, `actionlint` skips the
-shell checks and does not warn you.
+It checks the schema, the expressions and the embedded `run:` scripts, and it does the zizmor
+security audits. Its configuration is `.github/jactionlint.yaml`.
+
+Put `shellcheck` on `PATH` first. With `--shellcheck shellcheck`, a missing shellcheck stops
+the run.
 
 ## Comment-triggered workflows
 

@@ -1,13 +1,15 @@
 name: Lint
 
 # Lints every workflow in this repo on each pull request and on push to main, with no
-# `paths:` filter: both tools take seconds, and a paths-filtered check that is also
+# `paths:` filter: the run takes seconds, and a paths-filtered check that is also
 # required hangs a non-workflow PR at "Expected — waiting for status".
 #
-# - actionlint: YAML schema, `${{ }}` expression types, and (through shellcheck) the shell
-#   in every `run:` block.
-# - zizmor: the security audit. ENFORCING here, unlike the advisory copies in the project
-#   repos: this repo holds only workflows, so a finding is the thing to stop.
+# jactionlint (a fork of actionlint) does both jobs in one run, with its default profile:
+# - the actionlint checks: YAML schema, `${{ }}` expression types, and (through
+#   shellcheck) the shell in every `run:` block.
+# - the zizmor audits: the security checks. ENFORCING here, unlike the advisory copies in
+#   the project repos: this repo holds only workflows, so a finding is the thing to stop.
+#   --strict-exit makes a warn or info finding fail the run too.
 
 on:
   pull_request:
@@ -25,37 +27,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  actionlint:
-    name: actionlint
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install + run actionlint (version + checksum pinned)
-        env:
-          # renovate: datasource=github-releases depName=rhysd/actionlint
-          ACTIONLINT_VERSION: "1.7.12"
-          # sha256 of actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz: the digest GitHub
-          # publishes for that release asset. Bump it with the version. A moved artifact
-          # fails the -c.
-          ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
-        run: |
-          set -euo pipefail
-          url="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          curl -fsSL "$url" -o actionlint.tar.gz
-          echo "${ACTIONLINT_SHA256}  actionlint.tar.gz" | sha256sum -c -
-          tar -xzf actionlint.tar.gz actionlint
-          # The shellcheck binary is preinstalled on ubuntu-latest; fail loudly if that ever
-          # changes so run: blocks never go silently unlinted. (This comment avoids starting
-          # with the tool's name, which reads as an SC directive and errors SC1072/SC1073.)
-          shellcheck --version >/dev/null \
-            || { echo "::error::shellcheck missing — run: blocks would go unlinted"; exit 1; }
-          ./actionlint -color
-
-  zizmor:
-    name: zizmor
+  jactionlint:
+    name: jactionlint
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -64,14 +37,15 @@ jobs:
           persist-credentials: false
       - name: Set up uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-      - name: Install zizmor
+      - name: Install jactionlint
         env:
-          # renovate: datasource=pypi depName=zizmor
-          ZIZMOR_VERSION: "1.32.0"
-        run: uv tool install "zizmor==${ZIZMOR_VERSION}"
-      - name: Run zizmor
-        # GH_TOKEN turns on the online audits (known-vulnerable action versions, impostor
-        # commits). github.token is enough for public reads.
+          # renovate: datasource=pypi depName=jactionlint
+          JACTIONLINT_VERSION: "2.6.0"
+        run: uv tool install "jactionlint==${JACTIONLINT_VERSION}"
+      - name: Run jactionlint
+        # GH_TOKEN turns on the online checks (known-vulnerable action versions, impostor
+        # commits). github.token is enough for public reads. An explicit --shellcheck makes a
+        # missing shellcheck fail the run, so run: blocks never go silently unlinted.
         env:
           GH_TOKEN: ${{ github.token }}
-        run: zizmor --format github .
+        run: jactionlint --format github --strict-exit --online --online-token-env GH_TOKEN --shellcheck shellcheck

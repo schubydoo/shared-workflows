@@ -1,0 +1,9 @@
+# jactionlint configuration.
+#
+# The default profile runs the actionlint checks and the zizmor audits. A file named
+# actionlint.yaml would also apply the default profile, but jactionlint prints a note for
+# it, so this file names the profile.
+#
+# jactionlint knows the `job.workflow_ref` and `job.workflow_sha` context properties, so
+# the ignores that actionlint needed for claude-review.yml are gone.
+profile: default
