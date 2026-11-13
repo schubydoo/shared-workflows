@@ -7,3 +7,33 @@
 # jactionlint knows the `job.workflow_ref` and `job.workflow_sha` context properties, so
 # the ignores that actionlint needed for claude-review.yml are gone.
 profile: default
+
+# ⚠️ Keep this list equal to the required status checks of the `main` ruleset. The rule
+# unreachable-required-check then fails lint when a renamed or removed job would leave a
+# required check pending forever.
+required-checks:
+  - name: jactionlint
+    branches: [main]
+  - name: guard self-test
+    branches: [main]
+  - name: guard headless
+    branches: [main]
+
+rules:
+  # Rules of the pedantic profile that this repo passes. They guard future changes. The rest
+  # of that profile is style (require-shell and similar).
+  argument-injection: warn
+  command-injection: warn
+  comment-trigger-authorization: warn
+  output-clobbering: warn
+  unused-workflow-input: warn
+  unused-workflow-secret: warn
+  unused-ignore: warn
+  missing-version-comment: warn
+  # Also report a pinned action that loads an action or an image by tag (online only).
+  unpinnable-action:
+    pedantic: true
+  # The only action owners in use. The repo is public and callers run its workflows, so a
+  # new owner is a deliberate change to this list.
+  forbidden-uses:
+    allow: [actions/*, anthropics/claude-code-action, astral-sh/setup-uv]
