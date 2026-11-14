@@ -35,17 +35,29 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Set up uv
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-      - name: Install jactionlint
+      - name: Install jactionlint (version, sha256 and attestation pinned)
         env:
-          # renovate: datasource=pypi depName=jactionlint
+          # Keep the annotation directly above the VERSION line: the Renovate preset regex
+          # reads them as a pair. Renovate cannot bump the SHA256 line itself. Its
+          # postUpgradeTask runs scripts/check_binary_dep_pins.py --fix, which writes the
+          # digest that GitHub publishes for the release asset.
+          # renovate: datasource=github-releases depName=jdx/jactionlint
           JACTIONLINT_VERSION: "2.6.0"
-        run: uv tool install "jactionlint==${JACTIONLINT_VERSION}"
+          JACTIONLINT_SHA256: "d5400967b8f0d3a5ae9a4cee21f56400a50eb3f05d0cbb4ef17184f17f0760c8"
+          # gh needs a token for the release download and the attestation lookup.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          archive="jactionlint_${JACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          gh release download "v${JACTIONLINT_VERSION}" --repo jdx/jactionlint --pattern "$archive"
+          echo "${JACTIONLINT_SHA256}  ${archive}" | sha256sum -c -
+          gh attestation verify "$archive" --repo jdx/jactionlint
+          tar -xzf "$archive" jactionlint
+          ./jactionlint --version
       - name: Run jactionlint
         # GH_TOKEN turns on the online checks (known-vulnerable action versions, impostor
         # commits). github.token is enough for public reads. An explicit --shellcheck makes a
         # missing shellcheck fail the run, so run: blocks never go silently unlinted.
         env:
           GH_TOKEN: ${{ github.token }}
-        run: jactionlint --format github --strict-exit --online --online-token-env GH_TOKEN --shellcheck shellcheck
+        run: ./jactionlint --format github --strict-exit --online --online-token-env GH_TOKEN --shellcheck shellcheck
