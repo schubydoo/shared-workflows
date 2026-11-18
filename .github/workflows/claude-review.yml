@@ -106,7 +106,7 @@ jobs:
       # action mints its own token, which is what makes the review post as claude[bot].
       - name: Mint GitHub App token
         id: app-token
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
           client-id: ${{ secrets.app-client-id }}
           private-key: ${{ secrets.app-private-key }}
@@ -121,7 +121,7 @@ jobs:
       - name: Mint the review token
         id: review-token
         if: steps.cfg.outputs.mode == 'api'
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
           client-id: ${{ secrets.app-client-id }}
           private-key: ${{ secrets.app-private-key }}
@@ -135,7 +135,7 @@ jobs:
       - name: Mint the progress-comment token
         id: progress-token
         if: steps.cfg.outputs.mode == 'api'
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
           client-id: ${{ secrets.app-client-id }}
           private-key: ${{ secrets.app-private-key }}
@@ -781,7 +781,7 @@ jobs:
         id: review
         # The oauth path, or the fallback when the api path ran out of credits.
         if: steps.cfg.outputs.mode == 'oauth' || steps.review-api.outputs.fallback == 'true'
-        uses: anthropics/claude-code-action@cc98b3ae241b0fcfb6a42a2690751afffecb4452 # v1.0.278
+        uses: anthropics/claude-code-action@5a856893345e332afa621934082d8c660c26d689 # v1.0.282
         with:
           claude_code_oauth_token: ${{ secrets.claude-oauth-token }}
           trigger_phrase: "@claude review"
